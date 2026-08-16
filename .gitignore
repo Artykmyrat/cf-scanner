@@ -1,0 +1,52 @@
+# Бинарники
+bin/
+
+# Конфигурации (содержат пароли/ключи)
+configs.json
+
+# Пользовательский конфиг (может содержать чувствительные настройки)
+config.toml
+
+# Результаты сканирования
+results/
+
+# Кэш невалидных IP
+bad_ips.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+
+# Виртуальное окружение
+venv/
+.venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Временные файлы
+*.tmp
+*.temp
+*.log
+
+# Окружение
+.env
+.env.local
