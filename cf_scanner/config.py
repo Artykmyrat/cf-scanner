@@ -122,6 +122,12 @@ class NetworkConfig:
 
 
 @dataclass
+class LocaleConfig:
+    """Настройки языка."""
+    lang: str = "en"
+
+
+@dataclass
 class UIConfig:
     """Настройки интерфейса."""
     refresh_rate: int = 7
@@ -131,6 +137,7 @@ class UIConfig:
 @dataclass
 class AppConfig:
     """Главный класс конфигурации."""
+    locale: LocaleConfig = field(default_factory=LocaleConfig)
     scan: ScanConfig = field(default_factory=ScanConfig)
     xray: XrayConfig = field(default_factory=XrayConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
@@ -157,6 +164,9 @@ def load_config(cli_args: Optional[List[str]] = None) -> AppConfig:
 
     # 3. Создаём AppConfig из merged dict
     config = AppConfig(
+        locale=LocaleConfig(
+            lang=_get_value(merged, "locale.lang", "en"),
+        ),
         scan=ScanConfig(
             mode=_get_value(merged, "scan.mode", "cloudflare"),
             workers=_get_value(merged, "scan.workers", 400),
@@ -201,6 +211,13 @@ def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cf-scanner",
         description="CF-Scanner Pro — Cloudflare Edge IP Scanner with Xray-Core Verification",
+    )
+
+    # Язык
+    parser.add_argument(
+        "--lang", "-l",
+        choices=["en", "ru", "tr"],
+        help="Interface language (en, ru, tr)"
     )
 
     # Основные режимы
@@ -286,6 +303,9 @@ def create_parser() -> argparse.ArgumentParser:
 
 def apply_cli_args(config: AppConfig, args: argparse.Namespace) -> AppConfig:
     """Применяет CLI аргументы к конфигу."""
+    if args.lang:
+        config.locale.lang = args.lang
+
     if args.scan:
         config.scan.mode = args.scan
 
@@ -318,6 +338,9 @@ def create_default_config() -> None:
     content = """# CF-Scanner Pro Configuration
 # Раскомментируйте и измените нужные значения
 
+[locale]
+# lang = "en"                    # en | ru | tr
+
 [scan]
 # mode = "cloudflare"          # cloudflare | raw | xray
 # workers = 400
@@ -342,7 +365,10 @@ def show_config(config: AppConfig) -> None:
     """Выводит текущую конфигурацию."""
     print("\n=== Текущая конфигурация ===\n")
 
-    print("[scan]")
+    print("[locale]")
+    print(f"  lang = {config.locale.lang!r}")
+
+    print("\n[scan]")
     print(f"  mode = {config.scan.mode!r}")
     print(f"  workers = {config.scan.workers}")
     print(f"  deep_concurrency = {config.scan.deep_concurrency}")

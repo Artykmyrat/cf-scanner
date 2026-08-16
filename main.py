@@ -3,16 +3,15 @@
 """
 CF-Scanner Pro
 ==============
-scan.go'nun eksiksiz Python karşılığı + Xray-Core ile %100 emin tünel
-doğrulama + VLESS/VMess/Trojan/Shadowsocks için tam protokol desteği
-(tcp/ws/grpc/xhttp, tls/reality, fragment/Finalmask) + bilinen-geçersiz IP
-hafızası (30 gün) + ekrana sığan, sakin/animasyonlu rich arayüzü.
+Cloudflare Edge IP Scanner + Xray-Core tunnel verification
+VLESS/VMess/Trojan/Shadowsocks | WS/gRPC/xHTTP | TLS/REALITY/Fragment
 
-Kullanım:
-    python3 main.py                           # İnteraktif mod
-    python3 main.py --scan xray --asn AS13335  # CLI ile
-    python3 main.py --init-config              # config.toml oluştur
-    python3 main.py --show-config              # mevcut ayarları göster
+Usage:
+    python3 main.py                           # Interactive mode
+    python3 main.py --scan xray --asn AS13335  # CLI mode
+    python3 main.py --lang ru                  # Set language
+    python3 main.py --init-config              # Create config.toml
+    python3 main.py --show-config              # Show current config
 """
 from __future__ import annotations
 
@@ -34,6 +33,7 @@ from cf_scanner.cache_store import BadIPCache
 from cf_scanner.config import load_config, create_default_config, show_config, AppConfig
 from cf_scanner.config_store import ConfigStore
 from cf_scanner.link_parser import parse_link
+from cf_scanner.locale import t, set_language, get_language, get_language_name, get_available_languages
 from cf_scanner.models import ProxyConfig
 from cf_scanner.scanner import Scanner, load_existing_results
 from cf_scanner.xray_manager import (
@@ -47,21 +47,21 @@ DEFAULT_CF_PORTS = [443, 2053, 2083, 2087, 2096, 8443, 8880, 2052, 2082, 2086, 8
 
 
 # ============================================================================
-# Genel yardımcılar
+# Helpers
 # ============================================================================
 
 def banner() -> None:
     console.clear()
     console.print(Panel.fit(
         "[bold cyan]CF-Scanner Pro[/]\n"
-        "[dim]Cloudflare Edge IP Tarayıcı  •  Xray-Core Tam Tünel Doğrulama\n"
+        "[dim]Cloudflare Edge IP Scanner  •  Xray-Core Tunnel Verification\n"
         "VLESS · VMess · Trojan · Shadowsocks  |  WS / gRPC / xHTTP  |  TLS / REALITY / Fragment[/]",
         border_style="cyan",
     ))
 
 
 def pause() -> None:
-    Prompt.ask("\n[dim]Devam etmek için Enter'a basın[/]", default="", show_default=False)
+    Prompt.ask(f"\n[dim]{t('press_enter')}[/]", default="", show_default=False)
 
 
 def slugify(text: str) -> str:
@@ -78,14 +78,12 @@ def make_context_key(mode: str, cfg: Optional[ProxyConfig], ports: List[int]) ->
 
 
 def default_result_path(mode: str, cfg: Optional[ProxyConfig]) -> str:
-    import os
     os.makedirs("results", exist_ok=True)
     name = slugify(cfg.name) if cfg is not None else "cloudflare"
     return os.path.join("results", f"{mode}_{name}.json")
 
 
 def make_unique_path(path: str) -> str:
-    import os
     if not os.path.exists(path):
         return path
     base, ext = os.path.splitext(path)
@@ -119,7 +117,7 @@ def parse_manual_cidrs(raw: str) -> List[ipaddress.IPv4Network]:
             else:
                 nets.append(ipaddress.ip_network(token + "/32", strict=False))
         except ValueError:
-            console.print(f"[red]Geçersiz IP/CIDR atlandı:[/] {token}")
+            console.print(f"[red]{t('targets_invalid_cidr')}:[/] {token}")
     return nets
 
 
@@ -161,46 +159,45 @@ def run_with_dashboard(scanner: Scanner, asn: str, mode: str, cfg: Optional[Prox
 
 
 # ============================================================================
-# Hedef seçimi: ASN ve/veya elle CIDR/IP — BİRLİKTE kullanılabilir
+# Target selection: ASN and/or manual CIDR/IP — can be used together
 # ============================================================================
 
 def pick_targets_combined() -> Tuple[Optional[str], Optional[List[ipaddress.IPv4Network]], Optional[int]]:
-    console.print("\n[bold]Hedefler[/] [dim](en az birini doldurun — ikisini birlikte de kullanabilirsiniz)[/]")
-    asn = Prompt.ask("ASN (örn. AS13335 = Cloudflare) — atlamak için boş geçin", default="")
-    manual_raw = Prompt.ask("Ek CIDR/IP listesi, virgülle ayırın (örn. 188.114.96.0/24, 1.1.1.1) — atlamak için boş geçin",
-                             default="")
+    console.print(f"\n[bold]{t('targets_title')}[/] [dim]({t('targets_hint')})[/]")
+    asn = Prompt.ask(t("targets_asn"), default="")
+    manual_raw = Prompt.ask(t("targets_cidr"), default="")
 
     networks: List[ipaddress.IPv4Network] = []
     label_parts: List[str] = []
 
     asn = asn.strip()
     if asn:
-        console.print(f"[dim]RIPEstat'tan {asn} prefixleri çekiliyor...[/]")
+        console.print(f"[dim]{t('targets_fetching')} {asn}...[/]")
         try:
             prefixes = asyncio.run(ripe.fetch_prefixes(asn))
         except Exception as e:
-            console.print(f"[red]RIPE'tan veri alınamadı:[/] {e}")
+            console.print(f"[red]{t('targets_fetch_error')}: {e}[/]")
             prefixes = []
         if prefixes:
             asn_networks = ripe.split_to_24(prefixes)
             networks.extend(asn_networks)
             label_parts.append(asn.upper())
-            console.print(f"[green]{asn.upper()}: {len(prefixes)} prefix → {len(asn_networks)} /24 blok[/]")
+            console.print(f"[green]{asn.upper()}: {len(prefixes)} {t('targets_blocks')}[/]")
         else:
-            console.print(f"[yellow]{asn.upper()} için prefix bulunamadı, atlanıyor.[/]")
+            console.print(f"[yellow]{asn.upper()}: {t('targets_not_found')}[/]")
 
     manual_raw = manual_raw.strip()
     if manual_raw:
         manual_networks = parse_manual_cidrs(manual_raw)
         if manual_networks:
             networks.extend(manual_networks)
-            label_parts.append(f"{len(manual_networks)} elle girilen blok")
+            label_parts.append(f"{len(manual_networks)} {t('targets_manual_blocks')}")
 
     if not networks:
-        console.print("[red]Hiçbir geçerli hedef girilmedi, tarama başlatılamıyor.[/]")
+        console.print(f"[red]{t('targets_no_valid')}[/]")
         return None, None, None
 
-    # Aynı bloğun iki kaynaktan birden gelip tekrar taranmasını önle
+    # Dedup
     seen = set()
     deduped = []
     for n in networks:
@@ -210,39 +207,39 @@ def pick_targets_combined() -> Tuple[Optional[str], Optional[List[ipaddress.IPv4
 
     total = sum(n.num_addresses for n in deduped)
     label = " + ".join(label_parts)
-    console.print(f"[green]Toplam {len(deduped)} blok, {total:,} IP taranacak.[/]")
+    console.print(f"[green]{t('targets_total')}: {len(deduped)}, {total:,} {t('targets_ip_count')}[/]")
     return label, deduped, total
 
 
 # ============================================================================
-# Sonuç dosyası: devam et / yeni başlat
+# Result file: resume / new
 # ============================================================================
 
 def resolve_result_path(result_path: str):
     existing = load_existing_results(result_path)
     if existing:
-        console.print(f"\n[yellow]'{result_path}' dosyasında zaten {len(existing)} doğrulanmış IP var.[/]")
-        choice = Prompt.ask("Bu kayıtların üzerine devam edilsin mi (eskiler atlanır, tekrar test edilmez) "
-                             "yoksa yeni bir dosyaya mı başlansın?",
-                             choices=["devam", "yeni"], default="devam")
-        if choice == "yeni":
+        console.print(f"\n[yellow]'{result_path}' {t('results_already_exist')}: {len(existing)}[/]")
+        choice = Prompt.ask(t("results_continue_or_new"),
+                            choices=[t("results_continue"), t("results_new")],
+                            default=t("results_continue"))
+        if choice == t("results_new"):
             new_path = make_unique_path(result_path)
-            console.print(f"[dim]Yeni dosya: {new_path}[/]")
+            console.print(f"[dim]{t('results_new_file')}: {new_path}[/]")
             return new_path, []
     return result_path, existing
 
 
 # ============================================================================
-# Tarama Sihirbazı (tek ekrandan: tür + config + hedef + ayarlar)
+# Scan Wizard
 # ============================================================================
 
 def menu_start_scan(store: ConfigStore, xray_holder: dict, bad_cache: BadIPCache,
                     app_config: AppConfig) -> None:
     banner()
-    console.print("[bold]Tarama Türü[/]")
-    console.print("  1) Sade Cloudflare tespiti (config gerekmez, sadece IP'nin Cloudflare arkasında olup olmadığına bakar)")
-    console.print("  2) Config ile doğrulama (VLESS/VMess/Trojan/Shadowsocks — Xray-Core veya ham test)")
-    tur = Prompt.ask("Seçim", choices=["1", "2"], default="2")
+    console.print(f"[bold]{t('scan_type')}[/]")
+    console.print(f"  1) {t('scan_cloudflare_only')}")
+    console.print(f"  2) {t('scan_with_config')}")
+    tur = Prompt.ask(t("menu_selection"), choices=["1", "2"], default="2")
 
     cfg: Optional[ProxyConfig] = None
     use_xray = False
@@ -250,38 +247,31 @@ def menu_start_scan(store: ConfigStore, xray_holder: dict, bad_cache: BadIPCache
 
     if tur == "2":
         if not len(store):
-            console.print("\n[yellow]Henüz kayıtlı config yok, hemen bir tane ekleyelim.[/]")
+            console.print(f"\n[yellow]{t('configs_empty')}, {t('configs_add_new')}[/]")
             cfg = add_config_inline(store)
             if cfg is None:
                 return
         else:
             print_configs_table(store)
-            idx = IntPrompt.ask("\nKullanılacak config #")
+            idx = IntPrompt.ask(f"\n{t('configs_number')}")
             cfg = store.get(idx)
             if cfg is None:
-                console.print("[red]Geçersiz config numarası.[/]")
+                console.print(f"[red]{t('configs_invalid_number')}[/]")
                 return
 
         xray_mgr = xray_holder.get("mgr")
         if xray_mgr and xray_mgr.available:
             use_xray = Confirm.ask(
-                "[bold]Xray-Core ile %100 GERÇEK tünel testi yapılsın mı?[/] "
-                "(Hayır = daha hızlı ama daha az kesin ham TLS testi)", default=True)
+                f"[bold]{t('xray_ask_verify')}[/] "
+                f"{t('xray_ask_verify_hint')}", default=True)
         else:
-            console.print("[yellow]Xray-Core şu an kullanılamıyor (Ayarlar'dan indirebilirsiniz). "
-                          "Ham test ile devam edilecek.[/]")
+            console.print(f"[yellow]{t('xray_unavailable')}[/]")
         mode = "xray" if use_xray else "raw"
 
         if mode == "raw" and cfg is not None and cfg.is_quic_only_xhttp():
-            console.print(
-                "\n[yellow]Uyarı:[/] Bu config xhttp + alpn=h3 kullanıyor — "
-                "Xray-core bunu TCP değil GERÇEK QUIC/UDP ile taşır. 'Ham test' "
-                "modu TCP üzerinden TLS el sıkışması yaptığı için bu configi "
-                "%100 doğrulayamaz (yanlış-pozitif/negatif verebilir). "
-                "Kesin sonuç için Xray-Core tam tünel modunu kullanmanız önerilir."
-            )
-            if not Confirm.ask("Yine de ham test moduyla devam edilsin mi?", default=False):
-                console.print("[dim]İptal edildi, Xray-Core kullanılamıyorsa Ayarlar'dan indirebilirsiniz.[/]")
+            console.print(f"\n[yellow]{t('xray_raw_warning')}[/]")
+            if not Confirm.ask(t("xray_raw_continue"), default=False):
+                console.print(f"[dim]{t('xray_cancelled')}[/]")
                 pause()
                 return
 
@@ -295,26 +285,24 @@ def menu_start_scan(store: ConfigStore, xray_holder: dict, bad_cache: BadIPCache
     deep_concurrency = app_config.scan.deep_concurrency if use_xray else min(app_config.scan.deep_concurrency * 3, 120)
     result_path = default_result_path(mode, cfg)
 
-    max_results = IntPrompt.ask("Kaç IP doğrulanınca tarama otomatik dursun? (0 = tümünü tara)",
+    max_results = IntPrompt.ask(t("scan_max_results"),
                                 default=app_config.scan.max_results)
 
-    if Confirm.ask("Gelişmiş ayarları göstermek ister misiniz? (varsayılanlar genelde yeterlidir)", default=False):
+    if Confirm.ask(t("scan_advanced_settings"), default=False):
         ports = parse_port_list(
-            Prompt.ask("Taranacak port(lar)", default=",".join(str(p) for p in ports)), ports)
-        num_workers = IntPrompt.ask("Eşzamanlı TCP ön-filtre işçi sayısı", default=num_workers)
+            Prompt.ask(t("scan_ports"), default=",".join(str(p) for p in ports)), ports)
+        num_workers = IntPrompt.ask(t("scan_tcp_workers"), default=num_workers)
         deep_concurrency = IntPrompt.ask(
-            "Derin doğrulama eşzamanlılığı"
-            + (" (her biri ayrı bir Xray-Core süreci açar)" if use_xray else ""),
+            t("scan_deep_concurrency_xray") if use_xray else t("scan_deep_concurrency"),
             default=deep_concurrency)
-        result_path = Prompt.ask("Sonuç dosyası", default=result_path)
+        result_path = Prompt.ask(t("scan_result_file"), default=result_path)
 
     result_path, existing_results = resolve_result_path(result_path)
     context_key = make_context_key(mode, cfg, ports)
 
     known_bad_count = bad_cache.count(context_key)
     if known_bad_count:
-        console.print(f"[dim]Bu bağlam için bilinen-geçersiz hafızasında {known_bad_count:,} IP var, "
-                       f"bunlar otomatik atlanacak.[/]")
+        console.print(f"[dim]{known_bad_count:,} {t('scan_known_bad_skip')}[/]")
 
     active_xray_mgr = None
     if use_xray:
@@ -338,35 +326,35 @@ def menu_start_scan(store: ConfigStore, xray_holder: dict, bad_cache: BadIPCache
 
 
 # ============================================================================
-# Configler (tek ekran: listele + ekle + sil)
+# Configs menu
 # ============================================================================
 
 def print_configs_table(store: ConfigStore) -> None:
     if not len(store):
-        console.print("[yellow]Henüz kayıtlı config yok.[/]")
+        console.print(f"[yellow]{t('configs_empty')}[/]")
         return
-    table = Table(title="Kayıtlı Configler")
-    table.add_column("#", justify="right")
-    table.add_column("İsim")
-    table.add_column("Detay")
-    table.add_column("Adres")
-    table.add_column("Fragment")
+    table = Table(title=t("configs_table_title"))
+    table.add_column(t("configs_number"), justify="right")
+    table.add_column(t("configs_name"))
+    table.add_column(t("configs_detail"))
+    table.add_column(t("configs_address"))
+    table.add_column(t("configs_fragment"))
     for i, c in enumerate(store.configs):
         table.add_row(str(i), c.name, c.short_desc(), f"{c.address}:{c.port}", "✓" if c.fragment else "-")
     console.print(table)
 
 
 def add_config_inline(store: ConfigStore) -> Optional[ProxyConfig]:
-    console.print(Panel("vless:// , vmess:// , trojan:// veya ss:// linkini yapıştırın.", border_style="cyan"))
-    link = Prompt.ask("Link")
+    console.print(Panel(t("configs_paste_link"), border_style="cyan"))
+    link = Prompt.ask(t("configs_link"))
     cfg = parse_link(link)
     if cfg is None:
-        console.print("[red]Link ayrıştırılamadı. Desteklenen protokoller: vless, vmess, trojan, ss.[/]")
+        console.print(f"[red]{t('configs_parse_error')}[/]")
         return None
     store.add(cfg)
-    console.print(f"[green]Eklendi:[/] {cfg.name}  [{cfg.short_desc()}]  @ {cfg.address}:{cfg.port}")
+    console.print(f"[green]{t('configs_added')}: {cfg.name}  [{cfg.short_desc()}]  @ {cfg.address}:{cfg.port}")
     if cfg.fragment:
-        console.print(f"[cyan]Fragment algılandı:[/] {cfg.fragment}")
+        console.print(f"[cyan]{t('configs_fragment_detected')}: {cfg.fragment}[/]")
     return cfg
 
 
@@ -374,24 +362,24 @@ def menu_configs(store: ConfigStore) -> None:
     while True:
         banner()
         print_configs_table(store)
-        console.print("\n  [bold]e[/]) Yeni config ekle    [bold]s[/]) Config sil    [bold]0[/]) Geri")
-        choice = Prompt.ask("Seçim", choices=["e", "s", "0"], default="0")
+        console.print(f"\n  [bold]e[/]) {t('configs_add')}    [bold]s[/]) {t('configs_delete')}    [bold]0[/]) {t('configs_back')}")
+        choice = Prompt.ask(t("menu_selection"), choices=["e", "s", "0"], default="0")
         if choice == "e":
             add_config_inline(store)
             pause()
         elif choice == "s":
             if len(store):
-                idx = IntPrompt.ask("Silinecek # numarası")
-                console.print("[green]Silindi.[/]" if store.delete(idx) else "[red]Geçersiz numara.[/]")
+                idx = IntPrompt.ask(t("configs_delete_number"))
+                console.print(f"[green]{t('configs_deleted')}[/]" if store.delete(idx) else f"[red]{t('configs_invalid_number')}[/]")
             else:
-                console.print("[yellow]Silinecek config yok.[/]")
+                console.print(f"[yellow]{t('configs_nothing_to_delete')}[/]")
             pause()
         else:
             return
 
 
 # ============================================================================
-# Ayarlar (Xray-Core yönetimi + bilinen-geçersiz IP hafızası — tek ekran)
+# Settings menu
 # ============================================================================
 
 def menu_settings(xray_holder: dict, bad_cache: BadIPCache) -> None:
@@ -399,109 +387,125 @@ def menu_settings(xray_holder: dict, bad_cache: BadIPCache) -> None:
         banner()
         mgr = xray_holder.get("mgr")
         info = get_manual_download_info()
-        status = "[green]aktif[/]" if (mgr and mgr.available) else "[red]kapalı / bulunamadı[/]"
+        status = f"[green]{t('xray_active')}[/]" if (mgr and mgr.available) else f"[red]{t('xray_inactive')}[/]"
 
         console.print(Panel(
             f"Xray-Core: {status}\n"
-            f"  İkili dosya: {mgr.binary_path if mgr else '-'}\n"
-            f"  Bu sistem için beklenen dosya: [bold]{info['expected_asset']}[/]\n"
-            f"  Resmi indirme sayfası: {info['releases_page']}\n\n"
-            f"Bilinen-geçersiz IP hafızası: [bold]{bad_cache.count():,}[/] kayıt "
-            f"({len(bad_cache.contexts())} bağlamda) — 30 günden eski kayıtlar otomatik silinir.",
-            title="Durum", border_style="cyan",
+            f"  {t('xray_binary')}: {mgr.binary_path if mgr else '-'}\n"
+            f"  {t('xray_expected')}: [bold]{info['expected_asset']}[/]\n"
+            f"  {t('xray_download_page')}: {info['releases_page']}\n\n"
+            f"{t('xray_bad_ip_memory')}: [bold]{bad_cache.count():,}[/] {t('xray_records')} "
+            f"({len(bad_cache.contexts())} {t('xray_contexts')}) — {t('xray_auto_expire')}.",
+            title=t("menu_settings"), border_style="cyan",
         ))
 
-        console.print("  [bold]1[/]) Xray-Core'u indir / güncelle")
-        console.print("  [bold]2[/]) Xray-Core manuel indirme bilgisi göster")
-        console.print("  [bold]3[/]) Xray-Core'u bu oturumda " +
-                       ("devre dışı bırak" if (mgr and mgr.available) else "yeniden etkinleştir"))
-        console.print("  [bold]4[/]) Bilinen-geçersiz IP hafızasını görüntüle")
-        console.print("  [bold]5[/]) Bilinen-geçersiz IP hafızasını temizle")
-        console.print("  [bold]0[/]) Geri")
-        choice = Prompt.ask("Seçim", choices=["0", "1", "2", "3", "4", "5"], default="0")
+        console.print(f"  [bold]1[/]) {t('xray_download_update')}")
+        console.print(f"  [bold]2[/]) {t('xray_manual_info')}")
+        console.print(f"  [bold]3[/]) {t('xray_toggle')}")
+        console.print(f"  [bold]4[/]) {t('xray_view_bad_cache')}")
+        console.print(f"  [bold]5[/]) {t('xray_clear_bad_cache')}")
+        console.print(f"  [bold]0[/]) {t('configs_back')}")
+        choice = Prompt.ask(t("menu_selection"), choices=["0", "1", "2", "3", "4", "5"], default="0")
 
         if choice == "1":
-            with console.status("[cyan]İndiriliyor...[/]"):
+            with console.status(f"[cyan]{t('xray_downloading')}[/]"):
                 try:
                     path = download_latest_xray(progress_cb=lambda s, d: console.print(f"  [{s}] {d}"))
-                    console.print(f"[green]Başarılı:[/] {path}")
+                    console.print(f"[green]{t('xray_download_success')}: {path}[/]")
                     xray_holder["mgr"] = XrayCoreManager(binary_path=path)
                 except XrayDownloadError as e:
                     console.print(f"[red]{e}[/]")
             pause()
         elif choice == "2":
             console.print(Panel(
-                f"1) Tarayıcıdan açın: {info['releases_page']}\n"
-                f"2) '{info['expected_asset']}' dosyasını indirin\n"
-                f"3) Zip'i açın, içindeki 'xray' (Windows'ta 'xray.exe') dosyasını şu klasöre koyun:\n"
+                f"{t('settings_manual_step1')}: {info['releases_page']}\n"
+                f"{t('settings_manual_step2')}: '{info['expected_asset']}'\n"
+                f"{t('settings_manual_step3')}:\n"
                 f"   {info['bin_dir']}\n"
-                f"4) Linux/Mac/Termux'ta çalıştırma izni verin: chmod +x {info['bin_dir']}/xray",
-                title="Manuel İndirme Adımları", border_style="yellow",
+                f"{t('settings_manual_step4')}: chmod +x {info['bin_dir']}/xray",
+                title=t("xray_manual_steps"), border_style="yellow",
             ))
             pause()
         elif choice == "3":
             if mgr and mgr.available:
                 xray_holder["mgr"] = None
-                console.print("[yellow]Xray-Core bu oturum için devre dışı bırakıldı. "
-                               "Tarama sihirbazında otomatik olarak ham test moduna geçilecek.[/]")
+                console.print(f"[yellow]{t('xray_disabled')}[/]")
             else:
                 existing_bin = find_existing_binary()
                 xray_holder["mgr"] = XrayCoreManager(binary_path=existing_bin) if existing_bin else XrayCoreManager()
-                console.print("[green]Xray-Core tekrar etkinleştirildi.[/]" if xray_holder["mgr"].available
-                               else "[yellow]İkili dosya bulunamadı, önce indirin (Menü 1).[/]")
+                console.print(f"[green]{t('xray_reenabled')}[/]" if xray_holder["mgr"].available
+                               else f"[yellow]{t('xray_not_found_download')}[/]")
             pause()
         elif choice == "4":
             ctxs = bad_cache.contexts()
             if not ctxs:
-                console.print("[yellow]Hafıza boş.[/]")
+                console.print(f"[yellow]{t('xray_cache_empty')}[/]")
             else:
-                table = Table(title="Bilinen-Geçersiz IP Hafızası")
-                table.add_column("Bağlam")
-                table.add_column("Kayıt sayısı", justify="right")
+                table = Table(title=t("xray_cache_table_title"))
+                table.add_column(t("xray_cache_context"))
+                table.add_column(t("xray_cache_count"), justify="right")
                 for ctx, n in sorted(ctxs.items(), key=lambda x: -x[1]):
                     table.add_row(ctx, f"{n:,}")
                 console.print(table)
             pause()
         elif choice == "5":
-            if Confirm.ask("Tüm bilinen-geçersiz IP kayıtları silinsin mi? "
-                           "(bir dahaki taramada her şey sıfırdan test edilir)", default=False):
+            if Confirm.ask(t("xray_cache_clear_confirm"), default=False):
                 n = bad_cache.clear()
-                console.print(f"[green]{n:,} kayıt silindi.[/]")
+                console.print(f"[green]{n:,} {t('xray_cache_cleared')}[/]")
             pause()
         else:
             return
 
 
 # ============================================================================
-# CLI режим (неинтерактивный)
+# Language selection
+# ============================================================================
+
+def menu_language(app_config: AppConfig) -> None:
+    """Language selection submenu."""
+    console.print(f"\n[bold]{t('language_select')}[/]")
+    langs = get_available_languages()
+    for i, code in enumerate(langs, 1):
+        marker = " ←" if code == app_config.locale.lang else ""
+        console.print(f"  [bold]{i}[/]) {get_language_name(code)} ({code}){marker}")
+
+    choice = Prompt.ask(t("lang_prompt"), choices=[str(i) for i in range(1, len(langs) + 1)],
+                        default=str(langs.index(app_config.locale.lang) + 1))
+    idx = int(choice) - 1
+    if 0 <= idx < len(langs):
+        app_config.locale.lang = langs[idx]
+        set_language(langs[idx])
+
+
+# ============================================================================
+# CLI mode (non-interactive)
 # ============================================================================
 
 def run_cli_mode(app_config: AppConfig, store: ConfigStore, xray_holder: dict,
                  bad_cache: BadIPCache) -> None:
-    """Запуск в неинтерактивном режиме с CLI аргументами."""
+    """Run in non-interactive mode with CLI arguments."""
     from cf_scanner.config import create_parser
 
     parser = create_parser()
     args, _ = parser.parse_known_args()
 
-    # Определяем конфиг прокси
+    # Proxy config
     cfg: Optional[ProxyConfig] = None
     if args.link:
         cfg = parse_link(args.link)
         if cfg is None:
-            console.print("[red]Ошибка: не удалось распознать прокси ссылку[/]")
+            console.print(f"[red]{t('configs_parse_error')}[/]")
             sys.exit(1)
-        # Сохраняем конфиг
         store.add(cfg)
-        console.print(f"[green]Добавлен конфиг:[/] {cfg.name}")
+        console.print(f"[green]{t('configs_added')}: {cfg.name}[/]")
 
-    # Определяем ASN/CIDR
+    # ASN/CIDR targets
     networks: List[ipaddress.IPv4Network] = []
     label_parts: List[str] = []
 
     asn = args.asn or app_config.scan.default_asn
     if asn:
-        console.print(f"[dim]Получение префиксов для {asn} через RIPEstat...[/]")
+        console.print(f"[dim]{t('targets_fetching')} {asn}...[/]")
         try:
             prefixes = asyncio.run(ripe.fetch_prefixes(asn))
             if prefixes:
@@ -509,7 +513,7 @@ def run_cli_mode(app_config: AppConfig, store: ConfigStore, xray_holder: dict,
                 networks.extend(asn_networks)
                 label_parts.append(asn.upper())
         except Exception as e:
-            console.print(f"[red]Ошибка получения данных RIPE: {e}[/]")
+            console.print(f"[red]{t('targets_fetch_error')}: {e}[/]")
 
     if args.cidr:
         for cidr in args.cidr:
@@ -520,13 +524,13 @@ def run_cli_mode(app_config: AppConfig, store: ConfigStore, xray_holder: dict,
                     networks.append(ipaddress.ip_network(cidr + "/32", strict=False))
                 label_parts.append(cidr)
             except ValueError:
-                console.print(f"[red]Неверный CIDR: {cidr}[/]")
+                console.print(f"[red]{t('targets_invalid_cidr')}: {cidr}[/]")
 
     if not networks:
-        console.print("[red]Не указаны цели для сканирования (ASN или CIDR)[/]")
+        console.print(f"[red]{t('targets_no_valid')}[/]")
         sys.exit(1)
 
-    # Дедупликация
+    # Dedup
     seen = set()
     deduped = []
     for n in networks:
@@ -537,7 +541,7 @@ def run_cli_mode(app_config: AppConfig, store: ConfigStore, xray_holder: dict,
     total = sum(n.num_addresses for n in deduped)
     label = " + ".join(label_parts)
 
-    # Настройки сканирования
+    # Scan settings
     mode = args.scan or app_config.scan.mode
     ports = app_config.scan.ports
     if args.ports:
@@ -550,11 +554,11 @@ def run_cli_mode(app_config: AppConfig, store: ConfigStore, xray_holder: dict,
     deep_concurrency = args.deep_concurrency or app_config.scan.deep_concurrency
     max_results = args.max_results if args.max_results is not None else app_config.scan.max_results
 
-    # Путь для результатов
+    # Result path
     result_path = default_result_path(mode, cfg)
     _, existing_results = resolve_result_path(result_path)
 
-    # Контекст для кэша
+    # Cache context
     context_key = make_context_key(mode, cfg, ports)
 
     # Xray-Core
@@ -565,11 +569,11 @@ def run_cli_mode(app_config: AppConfig, store: ConfigStore, xray_holder: dict,
         if xray_path:
             active_xray_mgr = XrayCoreManager(binary_path=xray_path, max_concurrent=deep_concurrency)
         else:
-            console.print("[yellow]Xray-Core не найден, используется raw режим[/]")
+            console.print(f"[yellow]Xray-Core {t('xray_not_found_download')}[/]")
             mode = "raw"
             use_xray = False
 
-    # Создание сканера
+    # Create scanner
     scanner = Scanner(
         ips=ripe.iter_ips(deduped), total=total, mode=mode, ports=ports, cfg=cfg,
         xray_manager=active_xray_mgr, num_workers=num_workers, deep_concurrency=deep_concurrency,
@@ -579,10 +583,10 @@ def run_cli_mode(app_config: AppConfig, store: ConfigStore, xray_holder: dict,
         tls_timeout=app_config.network.tls_timeout,
     )
 
-    console.print(f"\n[bold cyan]Запуск сканирования:[/]")
-    console.print(f"  Режим: {mode}")
-    console.print(f"  Цели: {label} ({total:,} IP)")
-    console.print(f"  Воркеры: {num_workers} TCP / {deep_concurrency} deep")
+    console.print(f"\n[bold cyan]{t('cli_start_scan')}:[/]")
+    console.print(f"  {t('scan_mode')}: {mode}")
+    console.print(f"  {t('scan_target')}: {label} ({total:,} {t('targets_ip_count')})")
+    console.print(f"  {t('scan_tcp_workers')}: {num_workers} TCP / {deep_concurrency} deep")
     console.print()
 
     try:
@@ -593,14 +597,17 @@ def run_cli_mode(app_config: AppConfig, store: ConfigStore, xray_holder: dict,
 
 
 # ============================================================================
-# Ana menü
+# Main menu
 # ============================================================================
 
 def main() -> None:
-    # Загружаем конфигурацию
+    # Load config
     app_config = load_config(sys.argv[1:])
 
-    # Обработка специальных команд
+    # Apply language from config
+    set_language(app_config.locale.lang)
+
+    # Handle special commands
     if "--init-config" in sys.argv:
         create_default_config()
         sys.exit(0)
@@ -609,7 +616,7 @@ def main() -> None:
         show_config(app_config)
         sys.exit(0)
 
-    # Проверка на CLI режим (если есть --scan или --cidr или --link)
+    # Check for CLI mode
     cli_mode = any(arg in sys.argv for arg in ["--scan", "--cidr", "--link", "--asn"])
     if cli_mode:
         store = ConfigStore()
@@ -619,7 +626,7 @@ def main() -> None:
         run_cli_mode(app_config, store, xray_holder, bad_cache)
         return
 
-    # Интерактивный режим
+    # Interactive mode
     store = ConfigStore()
     bad_cache = BadIPCache()
     existing_bin = find_existing_binary()
@@ -628,16 +635,17 @@ def main() -> None:
     while True:
         banner()
         mgr = xray_holder["mgr"]
-        xray_status = "[green]●[/] aktif" if (mgr and mgr.available) else "[red]●[/] kapalı"
-        console.print(f"Configler: {len(store)} kayıtlı   |   Xray-Core: {xray_status}   |   "
-                      f"Bilinen geçersiz IP: {bad_cache.count():,}\n")
-        console.print("  [bold]1[/]) Tarama Başlat")
-        console.print("  [bold]2[/]) Configler (ekle / listele / sil)")
-        console.print("  [bold]3[/]) Ayarlar (Xray-Core, bilinen-geçersiz hafızası)")
-        console.print("  [bold]4[/]) Ayarları göster (--show-config)")
-        console.print("  [bold]0[/]) Çıkış\n")
+        xray_status = f"[green]●[/] {t('xray_active')}" if (mgr and mgr.available) else f"[red]●[/] {t('xray_inactive')}"
+        console.print(f"{t('menu_configs')}: {len(store)}   |   Xray-Core: {xray_status}   |   "
+                      f"{t('bad_ip_cache')}: {bad_cache.count():,}\n")
+        console.print(f"  [bold]1[/]) {t('menu_scan')}")
+        console.print(f"  [bold]2[/]) {t('menu_configs')}")
+        console.print(f"  [bold]3[/]) {t('menu_settings')}")
+        console.print(f"  [bold]4[/]) {t('menu_show_config')}")
+        console.print(f"  [bold]5[/]) {t('language')} [{get_language_name(get_language())}]")
+        console.print(f"  [bold]0[/]) {t('exit')}\n")
 
-        choice = Prompt.ask("Seçim", choices=["0", "1", "2", "3", "4"], default="1")
+        choice = Prompt.ask(t("menu_selection"), choices=["0", "1", "2", "3", "4", "5"], default="1")
 
         try:
             if choice == "1":
@@ -649,14 +657,16 @@ def main() -> None:
             elif choice == "4":
                 show_config(app_config)
                 pause()
+            elif choice == "5":
+                menu_language(app_config)
             elif choice == "0":
-                console.print("[cyan]Görüşmek üzere![/]")
+                console.print(f"[cyan]{t('exit')}[/]")
                 break
         except KeyboardInterrupt:
-            console.print("\n[yellow]İptal edildi.[/]")
+            console.print(f"\n[yellow]{t('exit')}[/]")
             pause()
         except Exception as e:
-            console.print(f"[red]Beklenmeyen hata:[/] {e}")
+            console.print(f"[red]{e}[/]")
             pause()
 
 
@@ -664,5 +674,5 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        console.print("\n[cyan]Çıkılıyor...[/]")
+        console.print(f"\n[cyan]{t('exit')}[/]")
         sys.exit(0)
